@@ -1,7 +1,7 @@
 <?php
 // panel/config/config.php
 
-// Bloqueo acceso directo
+// Bloqueo de acceso directo por URL
 if (php_sapi_name() !== 'cli') {
     $uri = $_SERVER['REQUEST_URI'] ?? '';
     $sfn = $_SERVER['SCRIPT_FILENAME'] ?? '';
@@ -19,34 +19,49 @@ if (!defined('__CONFIG_LOADED__')) define('__CONFIG_LOADED__', true);
 
 require_once __DIR__ . '/../api/_db.php';
 
-// ============ CREDENCIALES ============
-const SUPERADMIN_USER     = 'Root#8XkM$9pNrQ@vS3wYz';
-const SUPERADMIN_PASSWORD = '1#2y$12$W8kL9mNpQ@vR2wYzA.bCdEfGhIjKlMnOqRsTuVwXyZ0123456789';
-const ADMIN_USER          = 'Admin#7BmK$3qWsE@rT5yUi';
-const ADMIN_PASSWORD      = '2#3z$13$X9lM0nOqR@sS3xZaB.cDeFgHiJkLmNoPqRsTuVwXyZ987654321';
+// ============================================
+// 🔐 CREDENCIALES — desde Environment Variables
+// ============================================
+define('SUPERADMIN_USER',     getenv('SUPERADMIN_USER')     ?: '');
+define('SUPERADMIN_PASSWORD', getenv('SUPERADMIN_PASSWORD') ?: '');
+define('ADMIN_USER',          getenv('ADMIN_USER')          ?: '');
+define('ADMIN_PASSWORD',      getenv('ADMIN_PASSWORD')      ?: '');
 
-const WEBHOOK_SECRET    = 'A9AF97EOZYQAYQNB67T9WPN7DWYC70J6';
-const PRIORIDAD_DELAY   = 180;
-const DELAY_AVISO_ADMIN = 15;
+if (SUPERADMIN_USER === '' || SUPERADMIN_PASSWORD === '') {
+    http_response_code(500);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('ERROR: Faltan SUPERADMIN_USER / SUPERADMIN_PASSWORD en variables de entorno.');
+}
 
-// ============ SESIÓN ============
+// ============================================
+// 🔧 CONSTANTES DEL SISTEMA
+// ============================================
+define('WEBHOOK_SECRET',    getenv('PYP_API_KEY') ?: 'A9AF97EOZYQAYQNB67T9WPN7DWYC70J6');
+define('PRIORIDAD_DELAY',   180);
+define('DELAY_AVISO_ADMIN', 15);
+define('SITE_URL',          rtrim(getenv('PYP_URL') ?: '', '/'));
+
+// ============================================
+// 🔒 SESIÓN
+// ============================================
+$host = $_SERVER['HTTP_HOST'] ?? '';
+$isLocal = in_array($host, ['localhost', '127.0.0.1'], true)
+        || strpos($host, 'localhost:') === 0
+        || strpos($host, '127.0.0.1:') === 0;
+
 $cookie_options = [
-    'secure'   => true,
+    'secure'   => !$isLocal,   // true en producción, false en local
     'httponly' => true,
     'samesite' => 'Strict',
     'path'     => '/',
     'domain'   => '',
 ];
-$host = $_SERVER['HTTP_HOST'] ?? '';
-if (in_array($host, ['localhost','127.0.0.1'], true)
-    || strpos($host, 'localhost:') === 0
-    || strpos($host, '127.0.0.1:') === 0) {
-    $cookie_options['secure'] = false;
-}
 session_set_cookie_params($cookie_options);
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-// ============ ROLES / PRIORIDAD ============
+// ============================================
+// 🎭 ROLES / PRIORIDAD
+// ============================================
 function obtenerRolActual(): string {
     if (!isset($_SESSION['autenticado']) || $_SESSION['autenticado'] !== true) return 'invitado';
     return $_SESSION['rol'] ?? 'admin';
@@ -88,7 +103,9 @@ function marcarManipulacion(array &$s): bool {
     return true;
 }
 
-// ============ AUTENTICACIÓN ============
+// ============================================
+// 🔑 AUTENTICACIÓN
+// ============================================
 function estaAutenticado(): bool {
     if (!isset($_SESSION['autenticado']) || $_SESSION['autenticado'] !== true) return false;
     $_SESSION['last_activity'] = time();
@@ -116,7 +133,9 @@ function verificarCsrfToken($token): bool {
     return true;
 }
 
-// ============ IP ============
+// ============================================
+// 🌐 IP REAL (con headers de Render / Cloudflare)
+// ============================================
 function getIp(): string {
     foreach (['HTTP_CF_CONNECTING_IP','HTTP_X_FORWARDED_FOR','HTTP_X_REAL_IP','REMOTE_ADDR'] as $h) {
         if (!empty($_SERVER[$h])) {
@@ -127,7 +146,9 @@ function getIp(): string {
     return '0.0.0.0';
 }
 
-// ============ RATE LIMIT (BD) ============
+// ============================================
+// 🚦 RATE LIMIT (BD)
+// ============================================
 function checkRateLimit(string $ip, int $limit = 5, int $ventana = 900): bool {
     $hash = md5($ip);
     $row = db_fetch("SELECT contador, primera_vez FROM ratelimit WHERE ip_hash = ?", [$hash]);
@@ -147,7 +168,9 @@ function checkRateLimit(string $ip, int $limit = 5, int $ventana = 900): bool {
     return true;
 }
 
-// ============ SOLICITUDES (BD) ============
+// ============================================
+// 📦 SOLICITUDES (BD)
+// ============================================
 function cargarSolicitudes(): array {
     $rows = db_fetchAll("SELECT * FROM solicitudes ORDER BY fecha DESC");
     foreach ($rows as &$r) {
@@ -155,7 +178,6 @@ function cargarSolicitudes(): array {
             $extra = json_decode($r['payload_json'], true);
             if (is_array($extra)) $r = array_merge($extra, $r);
         }
-        // Normalizar tipos
         $r['manipulado_timestamp'] = (int)($r['manipulado_timestamp'] ?? 0);
     }
     return $rows;
@@ -194,20 +216,26 @@ function generarId(): string {
     return 'SOL-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
 }
 
-// ============ LOGIN LOG (BD) ============
+// ============================================
+// 📝 LOGIN LOG (BD)
+// ============================================
 function logLoginIntento(string $usuario, bool $exito, string $ip): void {
     db_exec("INSERT INTO login_log (usuario, exito, ip) VALUES (?, ?, ?)",
             [$usuario, $exito ? 1 : 0, $ip]);
 }
 
-// ============ SANITIZAR ============
+// ============================================
+// 🧼 SANITIZAR
+// ============================================
 function sanitizar($input) {
     if (is_array($input)) return array_map('sanitizar', $input);
     return str_replace(chr(0), '', trim((string)$input));
 }
 function escapar($t): string { return htmlspecialchars((string)$t, ENT_QUOTES, 'UTF-8'); }
 
-// ============ SESIONES ADMIN (BD) ============
+// ============================================
+// 👥 SESIONES ADMIN (BD)
+// ============================================
 function cargarSesiones(): array {
     return db_fetchAll("SELECT * FROM sesiones_admin ORDER BY ultima_actividad DESC");
 }
@@ -236,23 +264,23 @@ function limpiarSesionesInactivas(): void {
     db_exec("DELETE FROM sesiones_admin WHERE ultima_actividad < NOW() - INTERVAL '24 hours'");
 }
 
-// ============ HOST PERMITIDO ============
-$allowed_hosts = [
-    'localhost','127.0.0.1','localhost:8000','127.0.0.1:8000',
-    // Render asigna un dominio random; cuando lo tengas, agrégalo aquí:
-    // 'pyp-panel.onrender.com',
-];
+// ============================================
+// 🛡️ HOST PERMITIDO (Render + local)
+// ============================================
 $http_host = $_SERVER['HTTP_HOST'] ?? '';
 $is_local  = strpos($http_host, 'localhost') !== false
           || strpos($http_host, '127.0.0.1') !== false;
 $is_render = strpos($http_host, '.onrender.com') !== false;
-if (!$is_local && !$is_render && !in_array($http_host, $allowed_hosts)) {
+
+if (!$is_local && !$is_render) {
     http_response_code(403);
     header('Content-Type: text/plain');
     exit('403 Forbidden - Host no permitido');
 }
 
-// ============ HEADERS ============
+// ============================================
+// 🧾 HEADERS DE SEGURIDAD
+// ============================================
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: no-referrer');
