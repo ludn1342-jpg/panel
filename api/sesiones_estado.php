@@ -1,26 +1,11 @@
 <?php
-// panel/api/sesiones_estado.php
-require_once __DIR__ . '/../config/config.php';
+require_once __DIR__ . '/_bootstrap.php';
 
-header('Content-Type: application/json');
-
-// Verificar autenticación
-if (!estaAutenticado()) {
-    http_response_code(401);
-    echo json_encode(['success' => false, 'error' => 'No autorizado']);
-    exit;
-}
-
-// Cargar sesiones
 $sesiones = cargarSesiones();
-$total = count($sesiones);
-$activas = count(array_filter($sesiones, function($s) {
-    return $s['activa'] ?? true;
-}));
+$activas  = count(array_filter($sesiones, fn($s) => (int)($s['activa'] ?? 1) === 1));
 
-echo json_encode([
-    'success' => true,
-    'total' => $total,
-    'activas' => $activas,
-    'timestamp' => time()
+json_ok([
+    'total'    => count($sesiones),
+    'activas'  => $activas,
+    'sesiones' => $sesiones,
 ]);
